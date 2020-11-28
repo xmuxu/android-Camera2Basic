@@ -23,7 +23,7 @@
 23    <uses-sdk
 24        android:minSdkVersion="21"
 24-->E:\Android\ASprojects\github\android-Camera2Basic\Application\tests\AndroidManifest.xml
-25        android:targetSdkVersion="27" />
+25        android:targetSdkVersion="28" />
 25-->E:\Android\ASprojects\github\android-Camera2Basic\Application\tests\AndroidManifest.xml
 26
 27<!--     Specifies the instrumentation test runner used to run the tests. -->
@@ -48,7 +48,7 @@
 40    -->
 41    <application android:debuggable="true" >
 41-->E:\Android\ASprojects\github\android-Camera2Basic\Application\tests\AndroidManifest.xml:28:5-30:19
-41-->E:\Android\ASprojects\github\android-Camera2Basic\Application\build\intermediates\tmp\manifest\androidTest\debug\manifestMerger1216743285488846781.xml:7:18-43
+41-->E:\Android\ASprojects\github\android-Camera2Basic\Application\build\intermediates\tmp\manifest\androidTest\debug\manifestMerger6397416245299105010.xml:7:18-43
 42        <uses-library android:name="android.test.runner" />
 42-->E:\Android\ASprojects\github\android-Camera2Basic\Application\tests\AndroidManifest.xml:29:9-60
 42-->E:\Android\ASprojects\github\android-Camera2Basic\Application\tests\AndroidManifest.xml:29:23-57
