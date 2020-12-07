@@ -275,7 +275,7 @@ public class Camera2BasicFragment extends Fragment
 
     /**
      * Whether the current camera device supports Flash or not.
-     */
+            */
     private boolean mFlashSupported;
 
     /**
@@ -813,7 +813,7 @@ public class Camera2BasicFragment extends Fragment
                     CaptureRequest.CONTROL_AE_PRECAPTURE_TRIGGER_START);
             // Tell #mCaptureCallback to wait for the precapture sequence to be set.
             mState = STATE_WAITING_PRECAPTURE;
-            Log.d(TAG,"send AE trigger capture command with preview request");
+            Log.d(TAG,"send AE trigger capture command at preview mode");
             mCaptureSession.capture(mPreviewRequestBuilder.build(), mCaptureCallback,
                     mBackgroundHandler);
         } catch (CameraAccessException e) {
@@ -838,6 +838,11 @@ public class Camera2BasicFragment extends Fragment
             Log.d(TAG, "2. add ImageReader surface");
             captureBuilder.addTarget(mImageReader.getSurface());
 
+            // send camera frame to preview surface and Image surface at capture still pic mode.
+            SurfaceTexture texture = mTextureView.getSurfaceTexture();
+            Surface surface = new Surface(texture);
+            captureBuilder.addTarget(surface);
+
             // Use the same AE and AF modes as the preview.
             captureBuilder.set(CaptureRequest.CONTROL_AF_MODE,
                     CaptureRequest.CONTROL_AF_MODE_CONTINUOUS_PICTURE);
@@ -860,11 +865,11 @@ public class Camera2BasicFragment extends Fragment
                     unlockFocus();
                 }
             };
-            Log.d(TAG, "3. stop preview repeating");
-            mCaptureSession.stopRepeating();
-            Log.d(TAG, "4. abort any captures");
-            mCaptureSession.abortCaptures();
-            Log.d(TAG, "5. send capture command of STILL_CAPTURE request");
+            //Log.d(TAG, "3. stop preview repeating");
+            //mCaptureSession.stopRepeating();
+            //Log.d(TAG, "4. abort any captures");
+            //mCaptureSession.abortCaptures();
+            Log.d(TAG, "4. send capture command of STILL_CAPTURE request");
             mCaptureSession.capture(captureBuilder.build(), CaptureCallback, null);
         } catch (CameraAccessException e) {
             e.printStackTrace();
@@ -901,11 +906,12 @@ public class Camera2BasicFragment extends Fragment
             // After this, the camera will go back to the normal state of preview.
             mState = STATE_PREVIEW;
             Log.d(TAG, "set preview repeating request");
-            mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback,
-                    mBackgroundHandler);
+            //mCaptureSession.setRepeatingRequest(mPreviewRequest, mCaptureCallback,
+            //        mBackgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
         }
+
     }
 
     @Override
