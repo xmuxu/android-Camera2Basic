@@ -233,6 +233,10 @@ public class Camera2BasicFragment extends Fragment
     private ImageReader mImageReader;
 
     /**
+     * An {@link ImageReader} that handles preview callback data.
+     */
+    private ImageReader mPreviewImageReader;
+    /**
      * This is the output file for our picture.
      */
     private File mFile;
@@ -251,6 +255,26 @@ public class Camera2BasicFragment extends Fragment
 
     };
 
+    /**
+     * This a callback object for the {@link ImageReader}. "onImageAvailable" will be called when
+     * preview callback data is received.
+     */
+    private final ImageReader.OnImageAvailableListener mOnPreviewDataAvailableListener
+            = new ImageReader.OnImageAvailableListener() {
+
+        @Override
+        public void onImageAvailable(ImageReader reader) {
+            Image image = reader.acquireNextImage();
+            Image.Plane[] planes = image.getPlanes();
+            // YUV420_888 at here is I420
+            //#0 is always Y, plane #1 is always U (Cb), and plane #2 is always V (Cr).
+            Image.Plane yPlane = planes[0];
+            Image.Plane uPlane = planes[1];
+            Image.Plane vPlane = planes[2];
+            image.close();
+        }
+
+    };
     /**
      * {@link CaptureRequest.Builder} for the camera preview
      */
@@ -525,6 +549,10 @@ public class Camera2BasicFragment extends Fragment
                 mImageReader.setOnImageAvailableListener(
                         mOnImageAvailableListener, mBackgroundHandler);
 
+                mPreviewImageReader = ImageReader.newInstance(1920, 1080,
+                        ImageFormat.YUV_420_888, 2);
+                mPreviewImageReader.setOnImageAvailableListener(mOnPreviewDataAvailableListener, mBackgroundHandler);
+
                 // Find out if we need to swap dimension to get the preview size relative to sensor
                 // coordinate.
                 int displayRotation = activity.getWindowManager().getDefaultDisplay().getRotation();
@@ -647,6 +675,10 @@ public class Camera2BasicFragment extends Fragment
                 mImageReader.close();
                 mImageReader = null;
             }
+            if (null != mPreviewImageReader) {
+                mPreviewImageReader.close();
+                mPreviewImageReader = null;
+            }
         } catch (InterruptedException e) {
             throw new RuntimeException("Interrupted while trying to lock camera closing.", e);
         } finally {
@@ -696,12 +728,15 @@ public class Camera2BasicFragment extends Fragment
             Log.d(TAG, "2. create a preview request builder");
             mPreviewRequestBuilder
                     = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW);
-            Log.d(TAG,"3. builder bind preview surface");
+
+            Log.d(TAG,"3. request bind preview and preview data callback surface");
             mPreviewRequestBuilder.addTarget(surface);
 
+            mPreviewRequestBuilder.addTarget(mPreviewImageReader.getSurface());
+
             // Here, we create a CameraCaptureSession for camera preview.
-            Log.d(TAG, "4. create capture session, add preview and ImageReader surface");
-            mCameraDevice.createCaptureSession(Arrays.asList(surface, mImageReader.getSurface()),
+            Log.d(TAG, "4. create capture session, add preview and ImageReader and preview data callback surface");
+            mCameraDevice.createCaptureSession(Arrays.asList(surface, mImageReader.getSurface(), mPreviewImageReader.getSurface()),
                     new CameraCaptureSession.StateCallback() {
 
                         @Override
