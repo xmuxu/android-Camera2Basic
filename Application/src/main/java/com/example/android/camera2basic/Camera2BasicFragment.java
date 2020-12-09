@@ -20,6 +20,8 @@ import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.app.Dialog;
+import android.app.DialogFragment;
+import android.app.Fragment;
 import android.content.Context;
 import android.content.DialogInterface;
 import android.content.pm.PackageManager;
@@ -41,14 +43,16 @@ import android.hardware.camera2.TotalCaptureResult;
 import android.hardware.camera2.params.StreamConfigurationMap;
 import android.media.Image;
 import android.media.ImageReader;
+import android.media.MediaRecorder;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.HandlerThread;
 import android.support.annotation.NonNull;
+import android.support.v13.app.FragmentCompat;
 import android.support.v4.app.ActivityCompat;
-import android.support.v4.app.DialogFragment;
-import android.support.v4.app.Fragment;
-import android.support.v4.content.ContextCompat;
+//import android.support.v4.app.DialogFragment;
+//import android.support.v4.app.Fragment;
+//import android.support.v4.content.ContextCompat;
 import android.util.Log;
 import android.util.Size;
 import android.util.SparseIntArray;
@@ -57,6 +61,7 @@ import android.view.Surface;
 import android.view.TextureView;
 import android.view.View;
 import android.view.ViewGroup;
+import android.widget.Button;
 import android.widget.Toast;
 
 import java.io.File;
@@ -72,14 +77,23 @@ import java.util.concurrent.Semaphore;
 import java.util.concurrent.TimeUnit;
 
 public class Camera2BasicFragment extends Fragment
-        implements View.OnClickListener, ActivityCompat.OnRequestPermissionsResultCallback {
+        implements View.OnClickListener, FragmentCompat.OnRequestPermissionsResultCallback {
 
+    private static final int SENSOR_ORIENTATION_DEFAULT_DEGREES = 90;
+    private static final int SENSOR_ORIENTATION_INVERSE_DEGREES = 270;
+    private static final SparseIntArray DEFAULT_ORIENTATIONS = new SparseIntArray();
+    private static final SparseIntArray INVERSE_ORIENTATIONS = new SparseIntArray();
     /**
      * Conversion from screen rotation to JPEG orientation.
      */
     private static final SparseIntArray ORIENTATIONS = new SparseIntArray();
-    private static final int REQUEST_CAMERA_PERMISSION = 1;
+    private static final int REQUEST_VIDEO_PERMISSIONS = 1;
     private static final String FRAGMENT_DIALOG = "dialog";
+
+    private static final String[] VIDEO_PERMISSIONS = {
+            Manifest.permission.CAMERA,
+            Manifest.permission.RECORD_AUDIO,
+    };
 
     static {
         ORIENTATIONS.append(Surface.ROTATION_0, 90);
@@ -88,6 +102,12 @@ public class Camera2BasicFragment extends Fragment
         ORIENTATIONS.append(Surface.ROTATION_270, 180);
     }
 
+    static {
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_0, 270);
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_90, 180);
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_180, 90);
+        INVERSE_ORIENTATIONS.append(Surface.ROTATION_270, 0);
+    }
     /**
      * Tag for the {@link Log}.
      */
@@ -181,6 +201,22 @@ public class Camera2BasicFragment extends Fragment
      */
     private Size mPreviewSize;
 
+    /**
+     * The {@link android.util.Size} of video recording.
+     */
+    private Size mVideoSize;
+
+    /**
+     * MediaRecorder
+     */
+    private MediaRecorder mMediaRecorder;
+
+    /**
+     * Whether the app is recording video now
+     */
+    private boolean mIsRecordingVideo;
+
+    private String mNextVideoAbsolutePath;
     /**
      * {@link CameraDevice.StateCallback} is called when {@link CameraDevice} changes its state.
      */
@@ -396,6 +432,23 @@ public class Camera2BasicFragment extends Fragment
     }
 
     /**
+     * In this sample, we choose a video size with 3x4 aspect ratio. Also, we don't use sizes
+     * larger than 1080p, since MediaRecorder cannot handle such a high-resolution video.
+     *
+     * @param choices The list of available sizes
+     * @return The video size
+     */
+    private static Size chooseVideoSize(Size[] choices) {
+        for (Size size : choices) {
+            if (size.getWidth() == size.getHeight() * 4 / 3 && size.getWidth() <= 1080) {
+                return size;
+            }
+        }
+        Log.e(TAG, "Couldn't find any suitable video size");
+        return choices[choices.length - 1];
+    }
+
+    /**
      * Given {@code choices} of {@code Size}s supported by a camera, choose the smallest one that
      * is at least as large as the respective texture view size, and that is at most as large as the
      * respective max size, and whose aspect ratio matches with the specified value. If such size
@@ -453,11 +506,17 @@ public class Camera2BasicFragment extends Fragment
                              Bundle savedInstanceState) {
         return inflater.inflate(R.layout.fragment_camera2_basic, container, false);
     }
+    /**
+     * Button to record video
+     */
+    private Button mButtonVideo;
 
     @Override
     public void onViewCreated(final View view, Bundle savedInstanceState) {
         view.findViewById(R.id.picture).setOnClickListener(this);
         view.findViewById(R.id.info).setOnClickListener(this);
+        mButtonVideo = view.findViewById(R.id.video);
+        mButtonVideo.setOnClickListener(this);
         mTextureView = (AutoFitTextureView) view.findViewById(R.id.texture);
     }
 
@@ -490,25 +549,60 @@ public class Camera2BasicFragment extends Fragment
         super.onPause();
     }
 
-    private void requestCameraPermission() {
-        if (shouldShowRequestPermissionRationale(Manifest.permission.CAMERA)) {
+    /**
+     * Requests permissions needed for recording video.
+     */
+    private void requestVideoPermissions() {
+        if (shouldShowRequestPermissionRationale(VIDEO_PERMISSIONS)) {
             new ConfirmationDialog().show(getChildFragmentManager(), FRAGMENT_DIALOG);
         } else {
-            requestPermissions(new String[]{Manifest.permission.CAMERA}, REQUEST_CAMERA_PERMISSION);
+            FragmentCompat.requestPermissions(this, VIDEO_PERMISSIONS, REQUEST_VIDEO_PERMISSIONS);
         }
     }
-
+    /**
+     * Gets whether you should show UI with rationale for requesting permissions.
+     *
+     * @param permissions The permissions your app wants to request.
+     * @return Whether you can show permission rationale UI.
+     */
+    private boolean shouldShowRequestPermissionRationale(String[] permissions) {
+        for (String permission : permissions) {
+            if (FragmentCompat.shouldShowRequestPermissionRationale(this, permission)) {
+                return true;
+            }
+        }
+        return false;
+    }
     @Override
     public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
                                            @NonNull int[] grantResults) {
-        if (requestCode == REQUEST_CAMERA_PERMISSION) {
-            if (grantResults.length != 1 || grantResults[0] != PackageManager.PERMISSION_GRANTED) {
-                ErrorDialog.newInstance(getString(R.string.request_permission))
+        Log.d(TAG, "onRequestPermissionsResult");
+        if (requestCode == REQUEST_VIDEO_PERMISSIONS) {
+            if (grantResults.length == VIDEO_PERMISSIONS.length) {
+                for (int result : grantResults) {
+                    if (result != PackageManager.PERMISSION_GRANTED) {
+                        ErrorDialog.newInstance(getString(R.string.permission_request))
+                                .show(getChildFragmentManager(), FRAGMENT_DIALOG);
+                        break;
+                    }
+                }
+            } else {
+                ErrorDialog.newInstance(getString(R.string.permission_request))
                         .show(getChildFragmentManager(), FRAGMENT_DIALOG);
             }
         } else {
             super.onRequestPermissionsResult(requestCode, permissions, grantResults);
         }
+    }
+
+    private boolean hasPermissionsGranted(String[] permissions) {
+        for (String permission : permissions) {
+            if (ActivityCompat.checkSelfPermission(getActivity(), permission)
+                    != PackageManager.PERMISSION_GRANTED) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /**
@@ -604,7 +698,7 @@ public class Camera2BasicFragment extends Fragment
                 mPreviewSize = chooseOptimalSize(map.getOutputSizes(SurfaceTexture.class),
                         rotatedPreviewWidth, rotatedPreviewHeight, maxPreviewWidth,
                         maxPreviewHeight, largest);
-
+                mVideoSize = chooseVideoSize(map.getOutputSizes(MediaRecorder.class));
                 // We fit the aspect ratio of TextureView to the size of preview we picked.
                 int orientation = getResources().getConfiguration().orientation;
                 if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
@@ -635,10 +729,10 @@ public class Camera2BasicFragment extends Fragment
     /**
      * Opens the camera specified by {@link Camera2BasicFragment#mCameraId}.
      */
+    @SuppressWarnings("MissingPermission")
     private void openCamera(int width, int height) {
-        if (ContextCompat.checkSelfPermission(getActivity(), Manifest.permission.CAMERA)
-                != PackageManager.PERMISSION_GRANTED) {
-            requestCameraPermission();
+        if (!hasPermissionsGranted(VIDEO_PERMISSIONS)) {
+            requestVideoPermissions();
             return;
         }
         setUpCameraOutputs(width, height);
@@ -649,6 +743,7 @@ public class Camera2BasicFragment extends Fragment
             if (!mCameraOpenCloseLock.tryAcquire(2500, TimeUnit.MILLISECONDS)) {
                 throw new RuntimeException("Time out waiting to lock camera opening.");
             }
+            mMediaRecorder = new MediaRecorder();
             manager.openCamera(mCameraId, mStateCallback, mBackgroundHandler);
         } catch (CameraAccessException e) {
             e.printStackTrace();
@@ -714,6 +809,7 @@ public class Camera2BasicFragment extends Fragment
      */
     private void createCameraPreviewSession() {
         try {
+            closePreviewSession();
             SurfaceTexture texture = mTextureView.getSurfaceTexture();
             assert texture != null;
 
@@ -723,6 +819,7 @@ public class Camera2BasicFragment extends Fragment
             // This is the output Surface we need to start preview.
             Log.d(TAG, "1. new a surface to start preview");
             Surface surface = new Surface(texture);
+            List<Surface> surfaces = new ArrayList<>();
 
             // We set up a CaptureRequest.Builder with the output Surface.
             Log.d(TAG, "2. create a preview request builder");
@@ -734,10 +831,12 @@ public class Camera2BasicFragment extends Fragment
 
             mPreviewRequestBuilder.addTarget(mPreviewImageReader.getSurface());
 
+            surfaces.add(surface);
+            surfaces.add(mImageReader.getSurface());
+            surfaces.add(mPreviewImageReader.getSurface());
             // Here, we create a CameraCaptureSession for camera preview.
             Log.d(TAG, "4. create capture session, add preview and ImageReader and preview data callback surface");
-            mCameraDevice.createCaptureSession(Arrays.asList(surface, mImageReader.getSurface(), mPreviewImageReader.getSurface()),
-                    new CameraCaptureSession.StateCallback() {
+            mCameraDevice.createCaptureSession(surfaces, new CameraCaptureSession.StateCallback() {
 
                         @Override
                         public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
@@ -911,6 +1010,156 @@ public class Camera2BasicFragment extends Fragment
         }
     }
 
+    private void setUpMediaRecorder() throws IOException {
+        final Activity activity = getActivity();
+        if (null == activity) {
+            return;
+        }
+        mMediaRecorder.setAudioSource(MediaRecorder.AudioSource.MIC);
+        mMediaRecorder.setVideoSource(MediaRecorder.VideoSource.SURFACE);
+        mMediaRecorder.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4);
+        if (mNextVideoAbsolutePath == null || mNextVideoAbsolutePath.isEmpty()) {
+            mNextVideoAbsolutePath = getVideoFilePath(getActivity());
+        }
+        mMediaRecorder.setOutputFile(mNextVideoAbsolutePath);
+        mMediaRecorder.setVideoEncodingBitRate(10000000);
+        mMediaRecorder.setVideoFrameRate(30);
+        mMediaRecorder.setVideoSize(mVideoSize.getWidth(), mVideoSize.getHeight());
+        mMediaRecorder.setVideoEncoder(MediaRecorder.VideoEncoder.H264);
+        mMediaRecorder.setAudioEncoder(MediaRecorder.AudioEncoder.AAC);
+        int rotation = activity.getWindowManager().getDefaultDisplay().getRotation();
+        switch (mSensorOrientation) {
+            case SENSOR_ORIENTATION_DEFAULT_DEGREES:
+                mMediaRecorder.setOrientationHint(DEFAULT_ORIENTATIONS.get(rotation));
+                break;
+            case SENSOR_ORIENTATION_INVERSE_DEGREES:
+                mMediaRecorder.setOrientationHint(INVERSE_ORIENTATIONS.get(rotation));
+                break;
+        }
+        mMediaRecorder.prepare();
+    }
+
+    private String getVideoFilePath(Context context) {
+        final File dir = context.getExternalFilesDir(null);
+        return (dir == null ? "" : (dir.getAbsolutePath() + "/"))
+                + System.currentTimeMillis() + ".mp4";
+    }
+
+    private void closePreviewSession() {
+        if (mCaptureSession != null) {
+            mCaptureSession.close();
+            mCaptureSession = null;
+        }
+    }
+    private void startRecordingVideo() {
+        if (null == mCameraDevice || !mTextureView.isAvailable() || null == mPreviewSize) {
+            return;
+        }
+        Log.d(TAG, "startRecordingVideo");
+        try {
+            closePreviewSession();
+            setUpMediaRecorder();
+            SurfaceTexture texture = mTextureView.getSurfaceTexture();
+            assert texture != null;
+            texture.setDefaultBufferSize(mPreviewSize.getWidth(), mPreviewSize.getHeight());
+            mPreviewRequestBuilder = mCameraDevice.createCaptureRequest(CameraDevice.TEMPLATE_RECORD);
+            List<Surface> surfaces = new ArrayList<>();
+
+            // Set up Surface for the camera preview
+            Surface previewSurface = new Surface(texture);
+            surfaces.add(previewSurface);
+            mPreviewRequestBuilder.addTarget(previewSurface);
+
+            // Set up Surface for the MediaRecorder
+            Surface recorderSurface = mMediaRecorder.getSurface();
+            surfaces.add(recorderSurface);
+            mPreviewRequestBuilder.addTarget(recorderSurface);
+
+            // Start a capture session
+            // Once the session starts, we can update the UI and start recording
+
+            mCameraDevice.createCaptureSession(surfaces, new CameraCaptureSession.StateCallback() {
+
+                @Override
+                public void onConfigured(@NonNull CameraCaptureSession cameraCaptureSession) {
+                    mCaptureSession = cameraCaptureSession;
+                    updatePreview();
+                    Log.d(TAG, "CameraCaptureSession.StateCallback  onConfigured");
+                    getActivity().runOnUiThread(new Runnable() {
+                        @Override
+                        public void run() {
+                            // UI
+                            mButtonVideo.setText("stop");
+                            Log.d(TAG, "set text stop");
+                            mIsRecordingVideo = true;
+
+                            // Start recording
+                            mMediaRecorder.start();
+                        }
+                    });
+                }
+
+                @Override
+                public void onConfigureFailed(@NonNull CameraCaptureSession cameraCaptureSession) {
+                    Activity activity = getActivity();
+                    if (null != activity) {
+                        Toast.makeText(activity, "Failed", Toast.LENGTH_SHORT).show();
+                    }
+                }
+            }, mBackgroundHandler);
+        } catch (CameraAccessException | IOException e) {
+            e.printStackTrace();
+        }
+
+    }
+
+    private void setUpCaptureRequestBuilder(CaptureRequest.Builder builder) {
+        builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO);
+    }
+
+    /**
+     * Update the camera preview. {@link #startPreview()} needs to be called in advance.
+     */
+    private void updatePreview() {
+        if (null == mCameraDevice) {
+            return;
+        }
+        try {
+            setUpCaptureRequestBuilder(mPreviewRequestBuilder);
+            HandlerThread thread = new HandlerThread("CameraPreview");
+            thread.start();
+            mCaptureSession.setRepeatingRequest(mPreviewRequestBuilder.build(), null, mBackgroundHandler);
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+    }
+    private void stopRecordingVideo() {
+        // UI
+        mIsRecordingVideo = false;
+        mButtonVideo.setText("record");
+
+        try {
+            mCaptureSession.stopRepeating();
+            mCaptureSession.abortCaptures();
+        } catch (CameraAccessException e) {
+            e.printStackTrace();
+        }
+
+        // Stop recording
+        mMediaRecorder.stop();
+        mMediaRecorder.reset();
+
+        Activity activity = getActivity();
+        if (null != activity) {
+            Toast.makeText(activity, "Video saved: " + mNextVideoAbsolutePath,
+                    Toast.LENGTH_SHORT).show();
+            Log.d(TAG, "Video saved: " + mNextVideoAbsolutePath);
+        }
+        mNextVideoAbsolutePath = null;
+        //startPreview();
+        createCameraPreviewSession();
+    }
+
     /**
      * Retrieves the JPEG orientation from the specified screen rotation.
      *
@@ -954,6 +1203,14 @@ public class Camera2BasicFragment extends Fragment
         switch (view.getId()) {
             case R.id.picture: {
                 takePicture();
+                break;
+            }
+            case R.id.video: {
+                if (mIsRecordingVideo) {
+                    stopRecordingVideo();
+                } else {
+                    startRecordingVideo();
+                }
                 break;
             }
             case R.id.info: {
@@ -1076,12 +1333,12 @@ public class Camera2BasicFragment extends Fragment
         public Dialog onCreateDialog(Bundle savedInstanceState) {
             final Fragment parent = getParentFragment();
             return new AlertDialog.Builder(getActivity())
-                    .setMessage(R.string.request_permission)
+                    .setMessage(R.string.permission_request)
                     .setPositiveButton(android.R.string.ok, new DialogInterface.OnClickListener() {
                         @Override
                         public void onClick(DialogInterface dialog, int which) {
                             parent.requestPermissions(new String[]{Manifest.permission.CAMERA},
-                                    REQUEST_CAMERA_PERMISSION);
+                                    REQUEST_VIDEO_PERMISSIONS);
                         }
                     })
                     .setNegativeButton(android.R.string.cancel,
